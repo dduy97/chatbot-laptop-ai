@@ -1,0 +1,17 @@
+﻿streamlit
+watchdog
+chromadb
+pydantic
+google-generativeai
+google-genai
+groq
+gspread
+oauth2client
+google-auth-httplib2
+google-auth-oauthlib
+pandas
+numpy
+python-dotenv
+requests
+beautifulsoup4
+Unidecode

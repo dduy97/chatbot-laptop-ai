@@ -1,0 +1,61 @@
+# ===========================
+# 1. BẢO MẬT (QUAN TRỌNG NHẤT)
+# ===========================
+# File chứa API Key & biến môi trường
+.env
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Google / Service Account Keys (JSON)
+*.json
+
+# Cho phép dữ liệu JSON trong thư mục data (dữ liệu mẫu)
+!data/*.json
+!data/*.jsonl
+
+
+# ===========================
+# 2. PYTHON SYSTEM FILES
+# ===========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# ===========================
+# 3. MÔI TRƯỜNG ẢO (VIRTUAL ENV)
+# ===========================
+.venv/
+venv/
+env/
+
+
+# ===========================
+# 4. DATABASE & USER DATA
+# ===========================
+# Vector Database (tạo lại khi clone)
+data/chroma_db/
+
+# Log & lịch sử người dùng (dữ liệu phát sinh)
+data/user_logs.jsonl
+data/user_test_logs.jsonl
+data/user_history.jsonl
+
+
+# ===========================
+# 5. FILE HỆ THỐNG & IDE
+# ===========================
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# VS Code
+.vscode/
+# 1.5. GOOGLE / SERVICE ACCOUNT KEYS
+*.json
+!data/*.json
+!data/*.jsonl

@@ -73,10 +73,12 @@ GOOGLE_API_KEY=your_google_api_key
 GROQ_API_KEY=your_groq_api_key
 ADMIN_PASSWORD=your_password
 
+
 3. Xây dựng Vector Database
 
 Chuyển đổi dữ liệu laptop từ JSON sang Vector để phục vụ RAG:
 python scripts/create_vector_db.py
+
 
 4. Khởi chạy ứng dụng
 
@@ -117,8 +119,10 @@ python scripts/create_vector_db.py
 để tái tạo chỉ mục tìm kiếm Vector.
 
 Dự án được xây dựng theo hướng:
-+Phân tách rõ Backend xử lý và Frontend hiển thị
-+Logic chấm điểm minh bạch, có thể giải thích
+- Phân tách rõ ràng giữa Backend xử lý và Frontend hiển thị
+- Logic chấm điểm minh bạch, có khả năng giải thích (Explainable Scoring)
+
+
 Phù hợp cho:
 +Báo cáo môn học
 +Demo hệ thống AI ứng dụng thực tế

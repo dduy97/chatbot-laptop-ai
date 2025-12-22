@@ -1,6 +1,4 @@
-# ===========================
 # 1. BẢO MẬT (QUAN TRỌNG NHẤT)
-# ===========================
 # File chứa API Key & biến môi trường
 .env
 
@@ -15,26 +13,20 @@
 !data/*.jsonl
 
 
-# ===========================
 # 2. PYTHON SYSTEM FILES
-# ===========================
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
 
-# ===========================
 # 3. MÔI TRƯỜNG ẢO (VIRTUAL ENV)
-# ===========================
 .venv/
 venv/
 env/
 
 
-# ===========================
 # 4. DATABASE & USER DATA
-# ===========================
 # Vector Database (tạo lại khi clone)
 data/chroma_db/
 
@@ -44,9 +36,7 @@ data/user_test_logs.jsonl
 data/user_history.jsonl
 
 
-# ===========================
 # 5. FILE HỆ THỐNG & IDE
-# ===========================
 # MacOS
 .DS_Store
 
@@ -59,3 +49,8 @@ Thumbs.db
 *.json
 !data/*.json
 !data/*.jsonl
+
+data/debug_html/
+data/products_raw.jsonl
+data/user_logs.jsonl
+data/categories_auto.json   

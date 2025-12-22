@@ -1,9 +1,7 @@
 import os
 import json
 import re
-import math
 import unicodedata
-import html
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -12,9 +10,7 @@ import google.generativeai as genai
 from groq import Groq 
 from dotenv import load_dotenv
 
-# -----------------------------------------------------------------------------
 # 1. CONFIGURATION & CONSTANTS (CẤU HÌNH & HẰNG SỐ)
-# -----------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent 
 DATA_DIR = ROOT / "data"
 DB_DIR = DATA_DIR / "chroma_db"
@@ -28,9 +24,7 @@ DEFAULT_TOP_K = 250   # Retrieve more candidates initially / Lấy nhiều ứng
 DEFAULT_RETURN_K = 5  # Return top 5 to user / Trả về 5 kết quả tốt nhất
 SCAN_BATCH = 5000
 
-# -----------------------------------------------------------------------------
 # 2. ENVIRONMENT INITIALIZATION (KHỞI TẠO MÔI TRƯỜNG)
-# -----------------------------------------------------------------------------
 load_dotenv(ROOT / ".env")
 
 # Configure Google AI (For Embeddings)
@@ -39,72 +33,116 @@ genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 # Configure Groq AI (For Chat Completion)
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Ensure data directory exists / Đảm bảo thư mục data tồn tại
 if not DATA_DIR.exists():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# -----------------------------------------------------------------------------
-# 3. TEXT UTILITIES (TIỆN ÍCH XỬ LÝ VĂN BẢN)
-# -----------------------------------------------------------------------------
-def _strip_accents(s: str) -> str:
-    """Removes Vietnamese accents and standardizes Unicode."""
-    if not s: return ""
-    s = s.replace("đ", "d").replace("Đ", "D")
-    s = unicodedata.normalize("NFD", s)
-    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
-    return s
+# 3. TEXT UTILITIES (CẢI TIẾN: dùng remove_accents chi tiết hơn)
+def remove_accents(input_str: str) -> str:
+    """Chuẩn hóa tiếng Việt: loại bỏ dấu và chuyển 'đ' thành 'd'."""
+    if not input_str: 
+        return ""
+    input_str = input_str.replace("đ", "d").replace("Đ", "D")
+    s1 = unicodedata.normalize('NFD', input_str)
+    s2 = ''.join(c for c in s1 if unicodedata.category(c) != 'Mn')
+    return s2.lower()
 
 def norm_text(s: str) -> str:
     """Standardizes input text: lowercase, remove accents, clean spaces."""
     s = (s or "").strip().lower()
-    s = _strip_accents(s)
+    s = remove_accents(s)
     s = re.sub(r"\s+", " ", s)
     return s
 
-# -----------------------------------------------------------------------------
-# 4. INTENT & ENTITY EXTRACTION (TRÍCH XUẤT Ý ĐỊNH & THỰC THỂ)
-# -----------------------------------------------------------------------------
-PURPOSE_KEYS = {
-    "gaming": ["gaming", "choi game", "fps", "rtx", "gtx", "do hoa manh", "game", "chien game"],
-    "office": ["van phong", "hoc tap", "excel", "word", "sinh vien", "ke toan", "giao vien", "lam viec"],
-    "creator": ["do hoa", "thiet ke", "edit", "dung phim", "premiere", "photoshop", "ai", "render", "video"],
-    "thinlight": ["mong nhe", "nhe", "di chuyen", "mang di hoc", "ultrabook", "nho gon", "linh hoat"],
-}
-
+# 4. CẢI TIẾN INTENT DETECTION (keyword phong phú hơn)
 def detect_purpose_from_query(query: str) -> Optional[str]:
-    """Detects user intent based on keywords."""
-    t = norm_text(query)
-    for p, keys in PURPOSE_KEYS.items():
-        if any(k in t for k in keys):
-            return p
+    """Phát hiện ý định nâng cao với nhiều từ khóa tiếng Việt phổ biến."""
+    q_norm = norm_text(query)
+    
+    # Gaming
+    gaming_keywords = [
+        'game', 'choi', 'lol', 'pubg', 'valorant', 'csgo', 'genshin', 'gta', 'steam', 'gaming', 'fifa',
+        'choi game', 'chien game', 'rtx', 'gtx', 'card roi', 'card do hoa roi', 'fps', 'do hoa manh'
+    ]
+    if any(k in q_norm for k in gaming_keywords): 
+        return "gaming"
+    
+    # Creator / Đồ họa / Thiết kế / Lập trình
+    creator_keywords = [
+        'do hoa', 'thiet ke', 'render', 'dung phim', 'edit', 'video', 'adobe', 'photoshop', 'premiere',
+        '3d', 'cad', 'revit', 'ai', 'kien truc', 'lap trinh', 'code', 'programming', 'blender', 'after effects',
+        'autocad', 'solidworks', 'illustrator', 'maya'
+    ]
+    if any(k in q_norm for k in creator_keywords): 
+        return "creator"
+    
+    # Thin & Light / Mỏng nhẹ / Pin trâu
+    thin_keywords = [
+        'mong', 'nhe', 'di dong', 'doanh nhan', 'macbook', 'air', 'pin trau', 'pin lau', 'gon', 'sang chanh',
+        'ultrabook', 'mang di', 'di chuyen', 'nho gon', 'nhe nhang', 'pin dai'
+    ]
+    if any(k in q_norm for k in thin_keywords): 
+        return "thinlight"
+    
+    # Office / Văn phòng / Học tập
+    office_keywords = [
+        'van phong', 'hoc tap', 'sinh vien', 'word', 'excel', 'powerpoint', 'ke toan', 'giao vien',
+        'office', 'lam viec', 'hoc online', 'zoom', 'teams'
+    ]
+    if any(k in q_norm for k in office_keywords): 
+        return "office"
+
+    # Bonus: màn đẹp cao cấp → ưu tiên creator hoặc thinlight
+    premium_screen_keywords = ['oled', 'man oled', 'man dep', 'man sac net', '120hz', '144hz', '165hz', 'mini led', 'retina']
+    if any(k in q_norm for k in premium_screen_keywords):
+        return "creator"
+
     return None
 
+# 5. CẢI TIẾN PRICE EXTRACTION (chính xác hơn, hỗ trợ nhiều case)
 def extract_price_range(query: str) -> Tuple[int, int, bool]:
-    """Extracts budget constraints. Returns (min, max, has_price)."""
+    """Trích xuất khoảng giá linh hoạt hơn từ query tiếng Việt."""
     t = norm_text(query).replace(",", ".")
-    
-    # Range (e.g., "15-20")
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:-|–|den|toi)\s*(\d+(?:\.\d+)?)\s*(?:tr|trieu|m|million)?\b", t)
-    if m:
-        low, high = float(m.group(1)), float(m.group(2))
-        return int(min(low, high) * 1_000_000), int(max(low, high) * 1_000_000), True
 
-    # Single Price (e.g., "25tr") -> +/- 1M range assumption
-    m = re.search(r"\b(\d+(?:\.\d+)?)\s*(tr|trieu|m|million)\b", t)
-    if m:
-        x = float(m.group(1))
-        return int(max(0, x - 1) * 1_000_000), int((x + 1) * 1_000_000), True
+    # Range rõ ràng: 15-25tr, 15 den 25 trieu, tu 15 toi 25
+    range_patterns = [
+        r"(\d+(?:\.\d+)?)\s*(?:-|–|den|toi|den toi)\s*(\d+(?:\.\d+)?)\s*(tr|trieu|m|million)?",
+        r"(tu|tu khoang)\s*(\d+(?:\.\d+)?)\s*(den|toi)\s*(\d+(?:\.\d+)?)\s*(tr|trieu|m)?",
+    ]
+    for pattern in range_patterns:
+        m = re.search(pattern, t)
+        if m:
+            low = float(m.group(1 if 'tu' not in pattern else 2))
+            high = float(m.group(2 if 'tu' not in pattern else 4))
+            unit = (m.group(3) or m.group(5) or "").strip()
+            mul = 1_000_000 if unit in ['tr', 'trieu', 'm', 'million'] else 1
+            return int(min(low, high) * mul), int(max(low, high) * mul), True
 
-    m = re.search(r"\b(\d{1,3}(?:\.\d+)?)tr\b", t)
-    if m:
-        x = float(m.group(1))
-        return int(max(0, x - 1) * 1_000_000), int((x + 1) * 1_000_000), True
+    # Single price: khoảng 20tr, dưới 30tr, trên 15 triệu, 25tr
+    single_patterns = [
+        r"\b(khoang|khoảng|cir|duoi|duới|tren|trên)\s*(\d+(?:\.\d+)?)\s*(tr|trieu|m|k)?\b",
+        r"\b(\d+(?:\.\d+)?)\s*(tr|trieu|m|k)\b",
+    ]
+    for pattern in single_patterns:
+        m = re.search(pattern, t)
+        if m:
+            x = float(m.group(2 if m.group(1) else m.group(1)))
+            unit = m.group(3) if len(m.groups()) >= 3 and m.group(3) else ""
+            mul = 1_000_000 if unit in ['tr', 'trieu', 'm'] else (1_000 if unit == 'k' else 1)
+            x *= mul
+
+            prefix = m.group(1).lower() if m.group(1) else ""
+            if 'duoi' in prefix or 'duới' in prefix:
+                return 0, int(x), True
+            elif 'tren' in prefix or 'trên' in prefix:
+                return int(x), 100_000_000, True
+            else:
+                # Expand thông minh: ngân sách thấp thì ít expand hơn
+                expand = 500_000 if x < 10_000_000 else 1_000_000
+                return int(max(0, x - expand)), int(x + expand), True
 
     return 0, 100_000_000, False
 
-# -----------------------------------------------------------------------------
-# 5. BRAND HANDLING (XỬ LÝ THƯƠNG HIỆU)
-# -----------------------------------------------------------------------------
+# 5. BRAND HANDLING (giữ nguyên)
 BRAND_SYNONYMS = {
     "asus": ["asus"], "acer": ["acer"], "dell": ["dell"], "hp": ["hp", "hewlett packard"],
     "lenovo": ["lenovo"], "msi": ["msi"], "apple": ["apple", "macbook", "mac"], "gigabyte": ["gigabyte", "giga"],
@@ -132,7 +170,6 @@ def item_matches_brand(item: Dict[str, Any], wanted_canons: List[str]) -> bool:
     b_norm = norm_text(str(item.get("brand", "")))
     name_norm = norm_text(str(item.get("name", "")))
     
-    # Check raw source for hidden brand names
     raw = item.get("raw_source", {})
     if isinstance(raw, str):
         try: raw = json.loads(raw)
@@ -145,16 +182,12 @@ def item_matches_brand(item: Dict[str, Any], wanted_canons: List[str]) -> bool:
         if any(k in hay for k in keys): return True
     return False
 
-# -----------------------------------------------------------------------------
-# 6. VECTOR SEARCH & EMBEDDING (TÌM KIẾM VECTOR)
-# -----------------------------------------------------------------------------
+# 6. VECTOR SEARCH & EMBEDDING (giữ nguyên)
 def safe_embed(text: str, task_type: str) -> List[float]:
-    """Generates embeddings with retry logic."""
     for _ in range(3):
         try:
             resp = genai.embed_content(model=EMBED_MODEL, content=text, task_type=task_type)
             emb = resp["embedding"]
-            # Pad or truncate if dimension mismatch
             if len(emb) < EMBED_DIM: emb += [0.0] * (EMBED_DIM - len(emb))
             elif len(emb) > EMBED_DIM: emb = emb[:EMBED_DIM]
             return emb
@@ -173,9 +206,7 @@ def vector_search(query: str, top_k: int = DEFAULT_TOP_K) -> List[Dict[str, Any]
         return res.get("metadatas", [[]])[0] or []
     except Exception: return []
 
-# -----------------------------------------------------------------------------
-# 7. DATA PARSING & ENRICHMENT (PHÂN TÍCH & LÀM GIÀU DỮ LIỆU)
-# -----------------------------------------------------------------------------
+# 7. DATA PARSING & ENRICHMENT (giữ nguyên)
 def _to_int(x, default=0) -> int:
     try: return int(float(str(x).strip()))
     except: return default
@@ -210,90 +241,8 @@ def _parse_weight_kg(raw: Dict[str, Any]) -> float:
         if m: return float(m.group(1))
     return 0.0
 
-# -----------------------------------------------------------------------------
-# 8. ADVANCED HARDWARE LOGIC (LOGIC PHẦN CỨNG CHUYÊN SÂU) - [IMPORTANT]
-# Unified with UI Logic (hợp nhất với logic App.py)
-# -----------------------------------------------------------------------------
-def get_price_segment(price):
-    if price < 15_000_000: return "Budget"
-    if price < 25_000_000: return "Mid"
-    if price < 35_000_000: return "Upper-Mid"
-    if price < 50_000_000: return "High"
-    if price < 80_000_000: return "Premium"
-    return "Ultra"
-
-def get_gpu_expectation(segment):
-    """Minimum expected GPU tier for value calculation"""
-    if segment == 'Budget': return 3.0
-    if segment == 'Mid': return 6.0 
-    if segment == 'Upper-Mid': return 7.5
-    if segment == 'High': return 8.0 
-    if segment == 'Premium': return 8.5 
-    if segment == 'Ultra': return 9.5
-    return 3.0
-
-# =============================================================================
-# 1. GPU CLASSIFICATION SYSTEM (HỆ THỐNG PHÂN LOẠI GPU)
-# =============================================================================
-def get_gpu_tier(gpu_str: str, is_apple: bool, intent: str) -> float:
-    """
-    Determine GPU Tier (0-10) with updated RTX 5000 Series logic.
-    Xác định cấp độ GPU (0-10) - Cập nhật logic RTX 5000 Series mới nhất.
-    """
-    g = str(gpu_str).upper()
-    
-    # --- APPLE GPU LOGIC ---
-    if is_apple:
-        if intent == 'creator':
-            if 'MAX' in g: return 8.5
-            if 'PRO' in g: return 7.5
-            return 6.5 
-        # Non-creator logic / Logic cho nhu cầu thường
-        if 'MAX' in g: return 7.0
-        if 'PRO' in g: return 6.0
-        return 4.5 
-
-    # --- NVIDIA DISCRETE (RTX 5000 SERIES - NEW) ---
-    # Logic for new Gen 5000: Higher tier than 4000 equivalent
-    if '5090' in g: return 10.0
-    if '5080' in g: return 9.6
-    if '5070' in g: return 8.8  # Stronger than 4070 (8.5)
-    if '5060' in g: return 8.2  # Stronger than 4060 (7.5)
-    if '5050' in g: return 7.5  # Stronger than 4050 (7.0)
-
-    # --- RTX 4000 SERIES ---
-    if '4090' in g: return 9.8
-    if '4080' in g: return 9.3
-    if '4070' in g: return 8.5
-    if '4060' in g: return 7.5
-    if '4050' in g: return 7.0
-    
-    # --- OLDER SERIES ---
-    if '3080' in g: return 8.5
-    if '3070' in g: return 7.5
-    if '3060' in g: return 6.5
-    if '3050' in g: return 6.0
-    if '2050' in g or 'GTX' in g or '1650' in g: return 5.0
-    
-    # --- AMD & iGPU ---
-    if 'RX 7600' in g or 'RX 6700' in g: return 7.0
-    if 'RX 6600' in g: return 6.5
-    if 'ARC' in g: return 5.5 if intent != 'gaming' else 4.5
-    if '780M' in g or '680M' in g or '880M' in g or '890M' in g: return 6.0
-    if 'ULTRA' in g: return 5.0
-    if 'VEGA' in g or 'RADEON' in g: return 4.0
-    if 'IRIS' in g or 'XE' in g or 'UHD' in g: return 3.0
-    
-    return 2.0 # Fallback / Mặc định thấp nhất
-
-# =============================================================================
-# 2. DATA ENRICHMENT (LÀM GIÀU DỮ LIỆU)
-# =============================================================================
 def enrich_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalizes product data fields from raw source.
-    Chuẩn hóa các trường dữ liệu sản phẩm từ nguồn thô.
-    """
+    """Normalizes product data fields."""
     out = dict(item)
     raw = out.get("raw_source", {})
     if isinstance(raw, str):
@@ -301,7 +250,6 @@ def enrich_item(item: Dict[str, Any]) -> Dict[str, Any]:
         except: raw = {}
     out["raw_source"] = raw
 
-    # 1. Normalize Name & Brand / Chuẩn hóa Tên & Hãng
     if not out.get("name"): out["name"] = raw.get("Tên sản phẩm", "")
     if not out.get("brand"):
         n = norm_text(out.get("name", ""))
@@ -311,10 +259,8 @@ def enrich_item(item: Dict[str, Any]) -> Dict[str, Any]:
                 break
     else: out["brand"] = norm_text(str(out["brand"]))
 
-    # 2. Parse Price / Xử lý Giá
     out["price_value"] = _to_int(out.get("price_value") or raw.get("Giá", 0))
 
-    # 3. Normalize Hardware Specs / Chuẩn hóa thông số phần cứng
     if not out.get("cpu"): out["cpu"] = raw.get("Công nghệ CPU", "")
     if not out.get("gpu"): out["gpu"] = raw.get("Card màn hình", "")
 
@@ -324,20 +270,13 @@ def enrich_item(item: Dict[str, Any]) -> Dict[str, Any]:
     if _to_int(out.get("refresh_rate_hz")) <= 0: out["refresh_rate_hz"] = _parse_hz(str(raw.get("Tần số quét", "")))
     if _to_float(out.get("weight_kg")) <= 0: out["weight_kg"] = _parse_weight_kg(raw)
 
-    # 4. Screen Analysis / Phân tích màn hình
     raw_screen = norm_text(str(raw.get("Công nghệ màn hình", "") + raw.get("Màn hình", "") + raw.get("Độ phân giải", "")))
     out["is_ips"] = "ips" in raw_screen
     out["is_oled"] = "oled" in raw_screen
     out["is_high_res"] = any(x in raw_screen for x in ["2k", "4k", "qhd", "retina", "2.8k", "3k"])
-    out["features"] = { "is_ips": out["is_ips"], "is_oled": out["is_oled"], "high_res": out["is_high_res"] }
-
+    
     return out
-
-# =============================================================================
-# 3. FILTERING LOGIC (LOGIC LỌC SẢN PHẨM)
-# =============================================================================
 def filter_by_price(items: List[Dict[str, Any]], low: int, high: int) -> List[Dict[str, Any]]:
-    """Filter products within price range."""
     out = []
     for it in items:
         price = _to_int(it.get("price_value", 0), 0)
@@ -346,12 +285,9 @@ def filter_by_price(items: List[Dict[str, Any]], low: int, high: int) -> List[Di
     return out
 
 def filter_by_purpose_strict(items: List[Dict[str, Any]], purpose: str) -> List[Dict[str, Any]]:
-    """
-    Relaxed filtering: Avoid hard-rejecting gaming laptops for office use.
-    Logic lọc nới lỏng hơn để không loại bỏ oan máy Gaming khi dùng Office.
-    """
     p = (purpose or "").lower().strip()
-    if not p: return items
+    if not p: 
+        return items
 
     out = []
     for it in items:
@@ -360,36 +296,91 @@ def filter_by_purpose_strict(items: List[Dict[str, Any]], purpose: str) -> List[
         
         has_dgpu = any(x in gpu for x in ["rtx", "gtx", "card roi", "nvidia", "amd radeon"])
         
-        # Gaming: Needs Discrete GPU / Cần Card rời
         if p == "gaming":
-            if has_dgpu or "game" in norm_text(it.get("name","")): out.append(it)
-        
-        # Office: Gaming laptops are okay for office / Gaming làm văn phòng vẫn tốt
+            if has_dgpu or "game" in norm_text(it.get("name","")): 
+                out.append(it)
         elif p == "office":
             out.append(it) 
-        
-        # Thinlight: Filter by weight / Lọc theo trọng lượng (Ưu tiên < 1.9kg)
         elif p == "thinlight":
-            if w > 0 and w <= 1.9: out.append(it)
-            elif w == 0: out.append(it) # Keep unknown weight for scoring
-        
-        # Creator: Needs decent RAM / Cần RAM ổn
+            if w > 0 and w <= 1.9: 
+                out.append(it)
+            elif w == 0: 
+                out.append(it)  # Không có dữ liệu trọng lượng → vẫn cho qua
         elif p == "creator":
-            if _to_int(it.get("ram_gb", 0)) >= 8: out.append(it)
-        
+            if _to_int(it.get("ram_gb", 0)) >= 8: 
+                out.append(it)
         else:
             out.append(it)
     return out
 
-# =============================================================================
-# 4. SCORING SYSTEM (HỆ THỐNG CHẤM ĐIỂM)
-# =============================================================================
-def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
+# 8. HARDWARE LOGIC (giữ nguyên phần get_price_segment, get_gpu_expectation, get_gpu_tier)
+def get_price_segment(price):
+    if price < 15_000_000: return "Budget"
+    if price < 25_000_000: return "Mid"
+    if price < 35_000_000: return "Upper-Mid"
+    if price < 50_000_000: return "High"
+    if price < 80_000_000: return "Premium"
+    return "Ultra"
+
+def get_gpu_expectation(segment):
+    if segment == 'Budget': return 3.0
+    if segment == 'Mid': return 6.0 
+    if segment == 'Upper-Mid': return 7.5
+    if segment == 'High': return 8.0 
+    if segment == 'Premium': return 8.5 
+    if segment == 'Ultra': return 9.5
+    return 3.0
+
+def get_gpu_tier(gpu_str: str, is_apple: bool, intent: str) -> float:
     """
-    Unified Scoring Logic (Logic chấm điểm hợp nhất).
-    Matches the logic in Streamlit UI (app.py) EXACTLY.
+    Advanced GPU Tier Classification (0-10).
+    Updated with RTX 5000 Series logic.
     """
-    # 1. DATA EXTRACTION
+    g = str(gpu_str).upper()
+    
+    # --- APPLE GPU ---
+    if is_apple:
+        if intent == 'creator':
+            if 'MAX' in g: return 8.5
+            if 'PRO' in g: return 7.5
+            return 6.5
+        if 'MAX' in g: return 7.0
+        if 'PRO' in g: return 6.0
+        return 4.5 
+
+    # --- NVIDIA DISCRETE (RTX 5000 SERIES) ---
+    if '5090' in g: return 10.0
+    if '5080' in g: return 9.6
+    if '5070' in g: return 8.8
+    if '5060' in g: return 8.2
+    if '5050' in g: return 7.5
+
+    # --- NVIDIA DISCRETE (4000/3000) ---
+    if '4090' in g: return 9.8
+    if '4080' in g: return 9.3
+    if '4070' in g: return 8.5
+    if '4060' in g: return 7.5
+    if '4050' in g: return 7.0
+    if '3050' in g: return 6.0
+    if '2050' in g or 'GTX' in g or '1650' in g: return 5.0
+    
+    # --- AMD ---
+    if 'RX 7600' in g or 'RX 6700' in g: return 7.0
+    if 'RX 6600' in g: return 6.5
+    if 'RX 6500' in g: return 5.5
+    
+    # --- INTEGRATED ---
+    if 'ARC' in g: return 5.5 if intent != 'gaming' else 4.5
+    if '780M' in g or '680M' in g or '880M' in g or '890M' in g: return 6.0
+    if 'ULTRA' in g: return 5.0
+    if 'VEGA' in g or 'RADEON' in g: return 4.0
+    if 'IRIS' in g or 'XE' in g or 'UHD' in g: return 3.0
+    
+    return 2.0
+
+# 9. CẢI TIẾN SCORING SYSTEM (hợp nhất + thêm rank decay từ app.py)
+def calculate_score(item: Dict, purpose: str, rank_index: int = 0) -> float:
+    """Unified Scoring Logic với rank decay (từ app.py)."""
     raw = item.get("raw_source", {})
     if isinstance(raw, str): raw = json.loads(raw)
     
@@ -403,32 +394,24 @@ def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
     refresh_rate = int(item.get('refresh_rate_hz', 60))
     weight = float(item.get('weight_kg', 2.0))
 
-    # 2. HARDWARE CLASSIFICATION
     segment = get_price_segment(price)
     is_apple = 'APPLE' in brand or any(x in cpu_str for x in ['M1', 'M2', 'M3', 'M4'])
     is_intel_ultra = 'ULTRA' in cpu_str
     
-    # Get GPU Tier using the Advanced Logic
     gpu_tier = get_gpu_tier(gpu_str, is_apple, purpose)
     
-    # Identify iGPU types
     is_weak_igpu = gpu_tier <= 4.0 and not ('RTX' in gpu_str or 'GTX' in gpu_str or 'RX' in gpu_str)
     is_igpu_general = gpu_tier < 6.0 and not ('RTX' in gpu_str or 'GTX' in gpu_str)
     if is_apple:
         is_weak_igpu = False
         is_igpu_general = True
 
-    # 🔥 NEW: GAMING DESK LOGIC (SYNCED WITH APP.PY)
-    # Máy nặng >= 2.3kg vẫn được coi là tốt nếu là Gaming Desk
+    # Gaming Desk Logic
     is_gaming_desk = purpose == 'gaming' and weight >= 2.3
 
-    # 3. COMPONENT SCORING (0-100)
-    
-    # --- 3.1 GPU ---
     score_gpu = gpu_tier * 10
     if purpose == 'gaming' and is_weak_igpu and not is_apple: score_gpu = 25
 
-    # --- 3.2 CPU ---
     score_cpu = 60
     if is_apple: score_cpu = 90
     elif is_intel_ultra: score_cpu = 85
@@ -437,13 +420,11 @@ def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
     elif 'I5' in cpu_str or 'R5' in cpu_str: score_cpu = 70
     elif 'I3' in cpu_str: score_cpu = 50
 
-    # --- 3.3 RAM/SSD ---
     score_mem = 80
     if ram < 8: score_mem = 30
     elif ram >= 16: score_mem = 100
     if price > 20_000_000 and ssd < 512: score_mem -= 20
 
-    # --- 3.4 FORM/SCREEN ---
     score_form = 70
     if 'OLED' in screen_str or 'RETINA' in screen_str or 'DCI-P3' in screen_str: score_form += 15
     if '2K' in screen_str or '4K' in screen_str or 'QHD' in screen_str: score_form += 10
@@ -457,11 +438,9 @@ def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
         elif weight > 1.8: score_form = 40
         elif weight > 2.2: score_form = 20
 
-    # --- 3.5 VALUE SCORE ---
     score_value = 80
     expected_gpu = get_gpu_expectation(segment)
     
-    # Penalty for bad specs in high tiers / Trừ điểm nếu cấu hình thấp ở phân khúc cao
     if ram < 16 and segment in ['High', 'Premium', 'Ultra']: score_value -= 15
     if ssd < 512 and segment != 'Budget': score_value -= 10
 
@@ -471,20 +450,15 @@ def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
     else:
         diff = gpu_tier - expected_gpu
         if diff >= 1.0: score_value += 15 
-        elif diff <= -2.0: score_value -= 40 # Severe penalty / Phạt nặng
+        elif diff <= -2.0: score_value -= 40
         elif diff <= -1.0: score_value -= 25
 
-    # 4. WEIGHTED SUM (UPDATED FORMULA)
     final_score = 0
     if purpose == 'gaming':
-        # 🔥 Updated Formula (New weights & Desk compensation)
         final_score = (score_gpu * 0.32) + (score_value * 0.28) + (score_cpu * 0.15) + (score_mem * 0.1) + (score_form * 0.15)
-        
         if is_weak_igpu and not is_apple: final_score -= 35
         elif is_igpu_general and not is_apple: final_score -= 15
         if is_apple: final_score -= 35
-
-        # 🔥 Compensation for Gaming Desk / Bù điểm cho máy nặng
         if is_gaming_desk: final_score += 6
 
     elif purpose == 'creator':
@@ -500,65 +474,77 @@ def calculate_score(item: Dict, purpose: str, center_price: int = 0) -> float:
         if weight > 2.0: final_score -= 15
         if is_apple: final_score += 5
 
-    return float(max(0.0, min(100.0, final_score)))
+    # Rank decay từ app.py
+    if rank_index == 0:
+        decay = 0
+    elif rank_index == 1:
+        decay = 0.8
+    elif rank_index == 2:
+        decay = 1.6
+    else:
+        decay = rank_index * 0.7
+    final_score -= decay
 
-def rerank(items: List[Dict[str, Any]], purpose: str, center_price: int) -> List[Dict[str, Any]]:
+    min_score = 35.0 if purpose == 'gaming' else 45.0
+    return float(max(min_score, min(100.0, final_score)))
+
+def rerank(items: List[Dict[str, Any]], purpose: str) -> List[Dict[str, Any]]:
     for it in items:
-        # Use the unified calculate_score function
-        it["fit_score"] = round(calculate_score(it, purpose, center_price), 1)
+        it["fit_score"] = round(calculate_score(it, purpose), 1)
     
     def key(it: Dict[str, Any]):
-        return -it.get("fit_score", 0.0) # Sort by score DESC
+        return -it.get("fit_score", 0.0)
     
     return sorted(items, key=key)
 
-# -----------------------------------------------------------------------------
-# 10. LLM GENERATION (SINH LỜI KHUYÊN TỪ AI)
-# -----------------------------------------------------------------------------
+# 10. LLM GENERATION (giữ nguyên)
 def generate_llm_advice(query: str, purpose: str, products: List[Dict[str, Any]]) -> str:
     if not products:
         return "Mình chưa tìm được mẫu laptop phù hợp trong tầm giá này. Bạn thử tăng ngân sách hoặc đổi nhu cầu nhé."
 
     lines = []
     for i, p in enumerate(products[:3], 1):
+        score = p.get('fit_score', 0)
         line = (
-            f"{i}. {p.get('name')} - Giá: {p.get('price_value'):,} VNĐ\n"
-            f"   - CPU: {p.get('cpu')}, GPU: {p.get('gpu')}\n"
-            f"   - RAM: {p.get('ram_gb')}GB, SSD: {p.get('ssd_gb')}GB\n"
+            f"{i}. {p.get('name')} (Độ phù hợp: {score}%)\n"
+            f"   - Giá: {p.get('price_value'):,} VNĐ\n"
+            f"   - CPU: {p.get('cpu')} | GPU: {p.get('gpu')}\n"
+            f"   - RAM: {p.get('ram_gb')}GB | SSD: {p.get('ssd_gb')}GB | Nặng: {p.get('weight_kg')}kg\n"
         )
         lines.append(line)
     
     product_text = "\n".join(lines)
+    
     prompt = f"""
-Bạn là chuyên gia tư vấn laptop chuyên nghiệp.
-Khách hàng đang tìm: "{query}" (Nhu cầu: {purpose})
-
-Top 3 laptop tốt nhất hệ thống tìm được:
-{product_text}
-
-YÊU CẦU:
-1. Viết đoạn tư vấn ngắn (3-4 câu) tiếng Việt.
-2. Khuyên chọn máy nào tốt nhất và giải thích lý do (cấu hình/giá).
-3. Giọng văn tự nhiên, hữu ích.
+    Bạn là chuyên gia tư vấn laptop, đánh giá dựa trên hiệu năng thực tế và mức độ phù hợp với nhu cầu.
+    Khách hàng đang tìm: "{query}" (Mục đích: {purpose}).
+    
+    Hệ thống đã phân tích và chọn ra Top 3 máy tốt nhất:
+    {product_text}
+    
+    YÊU CẦU TRẢ LỜI:
+    1. KHUYÊN DÙNG MÁY SỐ 1 (Vì nó có điểm phù hợp cao nhất). Giải thích tại sao cấu hình đó tốt cho "{purpose}".
+    2. So sánh nhanh với máy số 2 nếu có điểm mạnh khác (ví dụ rẻ hơn hoặc nhẹ hơn).
+    3. Văn phong ngắn gọn, chuyên nghiệp, không chào hỏi rườm rà.
     """
 
     try:
         completion = groq_client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
-                {"role": "system", "content": "Bạn là trợ lý ảo tư vấn laptop chuyên nghiệp."},
+                {"role": "system", "content": "Bạn là trợ lý ảo tư vấn laptop chuyên nghiệp, ngắn gọn."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=400,
+            temperature=0.6,
+            max_tokens=450,
         )
         return completion.choices[0].message.content.strip()
     except Exception as e:
         print(f"⚠️ Groq API Error: {e}")
         return "Hệ thống đã tìm thấy các sản phẩm phù hợp nhất. Mời bạn xem chi tiết bên dưới."
 
+# 11. SCAN & LOG (giữ nguyên)
 def scan_db_by_price_brand(low: int, high: int, wanted_canons: List[str], need: int) -> List[Dict[str, Any]]:
-    """Fallback: Linear scan if vector search fails."""
     if _collection is None: return []
     found: List[Dict[str, Any]] = []
     offset = 0
@@ -580,9 +566,6 @@ def scan_db_by_price_brand(low: int, high: int, wanted_canons: List[str], need: 
         offset += len(metas)
     return found
 
-# -----------------------------------------------------------------------------
-# 11. LOGGING (GHI LOG)
-# -----------------------------------------------------------------------------
 def log_user_interaction(query: str, purpose: str, price_range: Tuple[int, int], advice: str, products: List[Dict]):
     try:
         log_entry = {
@@ -591,7 +574,6 @@ def log_user_interaction(query: str, purpose: str, price_range: Tuple[int, int],
             "intent": purpose,
             "price_min": price_range[0],
             "price_max": price_range[1],
-            # Truncate advice to save space / Cắt ngắn advice để tiết kiệm dung lượng log
             "ai_response": advice[:200] + "..." if len(advice) > 200 else advice,
             "recommended_models": [p.get("name", "Unknown") for p in products[:5]]
         }
@@ -600,9 +582,7 @@ def log_user_interaction(query: str, purpose: str, price_range: Tuple[int, int],
     except Exception as e:
         print(f"⚠️ Logger Error: {e}")
 
-# -----------------------------------------------------------------------------
-# 12. MAIN PUBLIC INTERFACE (GIAO DIỆN CHÍNH)
-# -----------------------------------------------------------------------------
+# 12. MAIN PUBLIC INTERFACE (giữ nguyên, chỉ dùng calculate_score mới)
 def get_answer(
     query: str,
     purpose: str,
@@ -627,7 +607,6 @@ def get_answer(
     delta = max(0, int(expand_million)) * 1_000_000
     low2 = max(0, low - delta)
     high2 = high + delta
-    center = (low + high) // 2
 
     # Brand Detection
     wanted_canons = canonicalize_brands(brands)
@@ -655,9 +634,13 @@ def get_answer(
             seen.add(key)
         filtered = merged
 
-    # 6. Advanced Filtering & Context-Aware Reranking (UNIFIED LOGIC)
+    # 6. Advanced Filtering & Context-Aware Reranking
     filtered = filter_by_purpose_strict(filtered, purpose)
-    ranked = rerank(filtered, purpose, center)
+    
+    # Rerank với rank_index để áp dụng decay
+    for i, it in enumerate(filtered):
+        it["fit_score"] = round(calculate_score(it, purpose, rank_index=i), 1)
+    ranked = sorted(filtered, key=lambda x: x.get("fit_score", 0), reverse=True)
     top = ranked[:return_k]
 
     # 7. AI Generation

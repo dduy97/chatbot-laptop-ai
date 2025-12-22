@@ -1,13 +1,11 @@
 """
 Data Ingestion & Vectorization Pipeline.
 Quy trình nhập liệu & Vector hóa dữ liệu.
-
 This module performs the ETL (Extract, Transform, Load) process:
 1. Extract: Reads raw product data from JSONL files.
 2. Transform: Cleans, normalizes fields (price, specs), and generates summary text.
 3. Vectorize: Generates embeddings using Google Gemini API with retry logic.
 4. Load: Upserts vectors and metadata into ChromaDB.
-
 Author: AI Engineer
 Date: 2026
 """
@@ -23,9 +21,7 @@ from tqdm import tqdm
 from chromadb import PersistentClient
 import google.generativeai as genai
 
-# =============================================================================
 # 1. CONFIGURATION & CONSTANTS (CẤU HÌNH & HẰNG SỐ)
-# =============================================================================
 ROOT_DIR = Path(__file__).resolve().parent.parent # Adjust based on your file structure
 DATA_DIR = ROOT_DIR / "data"
 INPUT_FILE = DATA_DIR / "products_final.jsonl"
@@ -37,9 +33,7 @@ EMBED_MODEL = "models/text-embedding-004"
 EMBED_DIM = 768
 BATCH_SIZE = 20  # Batch size for processing to respect API rate limits
 
-# =============================================================================
 # 2. ENVIRONMENT INITIALIZATION (KHỞI TẠO MÔI TRƯỜNG)
-# =============================================================================
 load_dotenv(ROOT_DIR / ".env")
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
@@ -49,9 +43,7 @@ if not DATA_DIR.exists():
 if not DB_DIR.exists():
     DB_DIR.mkdir(parents=True, exist_ok=True)
 
-# =============================================================================
 # 3. UTILITY FUNCTIONS: PARSING (TIỆN ÍCH PHÂN TÍCH DỮ LIỆU)
-# =============================================================================
 def to_int(value: Any, default: int = 0) -> int:
     """Safely converts a value to integer."""
     try:
@@ -82,11 +74,9 @@ def parse_hz(value: Any) -> int:
     if value is None: return 0
     s = str(value).lower()
     
-    # Priority 1: Explicit 'hz' unit
     match = re.search(r"(\d+)\s*hz", s)
     if match: return int(match.group(1))
     
-    # Priority 2: Standalone 2-3 digit numbers (heuristic)
     match_fallback = re.search(r"\b(\d{2,3})\b", s)
     return int(match_fallback.group(1)) if match_fallback else 0
 
@@ -118,9 +108,7 @@ def normalize_brand(name: str) -> str:
 
     return "Other"
 
-# =============================================================================
 # 4. DATA ENRICHMENT & TRANSFORMATION (LÀM GIÀU & CHUYỂN ĐỔI DỮ LIỆU)
-# =============================================================================
 def build_summary_text(item: Dict[str, Any]) -> str:
     """
     Constructs a semantic summary string for embedding.
@@ -225,9 +213,7 @@ def normalize_item(item: Dict[str, Any]) -> Dict[str, Any]:
 
     return out
 
-# =============================================================================
 # 5. VECTORIZATION LOGIC (LOGIC VECTOR HÓA)
-# =============================================================================
 def safe_embed(text: str) -> List[float]:
     """
     Generates embeddings with exponential backoff/retry logic.
@@ -273,9 +259,7 @@ def load_jsonl(path: Path) -> List[Dict[str, Any]]:
                 continue # Skip malformed lines
     return items
 
-# =============================================================================
 # 6. MAIN PIPELINE EXECUTION (THỰC THI PIPELINE CHÍNH)
-# =============================================================================
 def build_database():
     """
     Orchestrates the DB creation process.

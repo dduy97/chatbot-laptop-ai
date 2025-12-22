@@ -1,5 +1,4 @@
 # data_standardization.py
-# =============================================================================
 # DATA STANDARDIZATION PIPELINE (ETL STEP 1)
 # QUY TRÌNH CHUẨN HÓA DỮ LIỆU
 #
@@ -11,16 +10,13 @@
 #
 # Author: AI Engineer
 # Date: 2026
-# =============================================================================
 
 import json
 import re
 from pathlib import Path
 from typing import Dict, Optional, Any
 
-# =============================================================================
 # 1. PATH CONFIGURATION (CẤU HÌNH ĐƯỜNG DẪN)
-# =============================================================================
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 
@@ -31,9 +27,7 @@ OUTPUT_FILE = DATA_DIR / "products_final.jsonl"
 if not DATA_DIR.exists():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# =============================================================================
 # 2. UTILITY FUNCTIONS (CÁC HÀM TIỆN ÍCH)
-# =============================================================================
 def norm(text: Optional[str]) -> str:
     """
     Normalize text: lower case and strip whitespace.
@@ -61,9 +55,7 @@ def extract_float(pattern: str, text: str) -> Optional[float]:
     m = re.search(pattern, text, re.IGNORECASE)
     return float(m.group(1)) if m else None
 
-# =============================================================================
 # 3. BRAND NORMALIZATION (CHUẨN HÓA THƯƠNG HIỆU)
-# =============================================================================
 def normalize_brand(name: str) -> str:
     """
     Map various brand spellings to canonical names.
@@ -83,9 +75,7 @@ def normalize_brand(name: str) -> str:
     
     return "Other"
 
-# =============================================================================
 # 4. CORE STANDARDIZATION LOGIC (LOGIC CHUẨN HÓA CHÍNH)
-# =============================================================================
 def standardize(item: Dict[str, Any], idx: int) -> Dict[str, Any]:
     """
     Process a single raw product item into a structured format.
@@ -156,9 +146,7 @@ def standardize(item: Dict[str, Any], idx: int) -> Dict[str, Any]:
         "raw_source": item,  # Keep full raw data / Giữ lại toàn bộ dữ liệu gốc
     }
 
-# =============================================================================
 # 5. MAIN EXECUTION (CHƯƠNG TRÌNH CHÍNH)
-# =============================================================================
 def main():
     if not INPUT_FILE.exists():
         print(f"❌ Input file not found / Không tìm thấy file: {INPUT_FILE}")

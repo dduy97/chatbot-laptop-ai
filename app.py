@@ -14,7 +14,7 @@ env_path = Path(__file__).resolve().parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-ADMIN_PASSWORD = "k37tlu"  # Nên chuyển sang .env hoặc secrets sau
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD") 
 
 # Initialize Groq Client
 try:
@@ -23,12 +23,12 @@ try:
 except ImportError:
     groq_client = None
 
-# IMPORT FROM CORE (sau khi đã di chuyển toàn bộ logic vào đây)
+# IMPORT FROM CORE
 try:
     from src.chatbot_rag_core import (
         get_answer,
-        detect_purpose_from_query,      # Nếu muốn dùng auto-detect trong UI (tùy chọn)
-        extract_price_range             # Dùng để check người dùng có nhập giá chưa
+        detect_purpose_from_query,
+        extract_price_range
     )
 except ImportError:
     # Fallback dummy
@@ -36,7 +36,7 @@ except ImportError:
     def detect_purpose_from_query(q): return "office"
     def extract_price_range(q): return 0, 100_000_000, False
 
-# 2. GOOGLE SHEETS INTEGRATION (giữ nguyên)
+# 2. GOOGLE SHEETS INTEGRATION
 def connect_to_gsheet():
     if "gcp_service_account" not in st.secrets:
         return None
@@ -62,14 +62,14 @@ def log_user_data(query, purpose, result_count, products):
                 lines = []
                 for i, p in enumerate(top_5):
                     price = f"{p.get('price_value', 0):,.0f}"
-                    score = round(p.get('fit_score', p.get('smart_score', 0)), 1)  # Dùng fit_score từ core mới
+                    score = round(p.get('fit_score', p.get('smart_score', 0)), 1)
                     lines.append(f"#{i+1} {p.get('name')} ({price}đ - {score}%)")
                 top_products_str = "\n".join(lines)
             sheet.append_row([timestamp, query, purpose, result_count, top_products_str])
     except Exception as e:
         print(f"Log Error: {e}")
 
-# 3. HELPER FUNCTION (chỉ giữ lại format_storage)
+# 3. HELPER FUNCTION
 def format_storage(val):
     try:
         v = float(val)
@@ -79,7 +79,7 @@ def format_storage(val):
     except:
         return str(val)
 
-# 4. AI GENERATION (Groq Advisor - giữ nguyên)
+# 4. AI GENERATION (Groq Advisor)
 def call_groq_analysis(query, intent, top_products):
     if not groq_client or not top_products:
         return None
@@ -137,7 +137,7 @@ def call_groq_analysis(query, intent, top_products):
     try:
         chat = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",  # Model mới nhất, mạnh nhất hiện tại
             temperature=0.5,
             max_tokens=600
         )
@@ -146,7 +146,7 @@ def call_groq_analysis(query, intent, top_products):
         print(f"Groq analysis error: {e}")
         return None
 
-# 5. UI STYLE (giữ nguyên hoàn toàn)
+# 5. UI STYLE
 st.set_page_config(page_title="AI Laptop Consultant", layout="wide", page_icon="💻")
 
 st.markdown("""
@@ -190,7 +190,7 @@ if st.session_state.get('show_admin', False):
             pwd = st.text_input("Nhập mã truy cập:", type="password")
             submit = st.form_submit_button("Truy cập")
             if submit:
-                if pwd == ADMIN_PASSWORD:
+                if pwd == os.getenv("ADMIN_PASSWORD"):  # Lấy từ .env
                     st.success("Đang kết nối Google Sheets...")
                     my_sheet_link = st.secrets["general"]["sheet_link"]
                     st.link_button("📂 Mở file Google Sheet gốc", my_sheet_link)
@@ -210,12 +210,22 @@ if st.session_state.get('show_admin', False):
                 else:
                     st.error("Sai mật khẩu!")
 
+# Auto-update Purpose Callback (Tự động nhảy mục đích khi nhập query)
+def auto_update_purpose():
+    if "query_input" in st.session_state:
+        q = st.session_state.query_input
+        detected = detect_purpose_from_query(q)
+        if detected:
+            st.session_state.purpose_select = detected  # Tự nhảy selectbox
+
 # Input Form
 c1, c2 = st.columns([2, 1])
 with c1:
     query = st.text_input("💬 Nhu cầu & Ngân sách", 
                           placeholder="VD: Laptop gaming 20 triệu, macbook mỏng nhẹ pin trâu...", 
-                          key="query_input")
+                          key="query_input",
+                          on_change=auto_update_purpose)  # Gọi callback khi query thay đổi
+
 with c2:
     purpose_options = ["auto", "office", "gaming", "creator", "thinlight"]
     purpose = st.selectbox("🎯 Mục đích chính", purpose_options,
@@ -239,14 +249,11 @@ if st.button("🔍 Tìm kiếm & Tư vấn ngay", type="primary", use_container_
             st.toast("⚠️ Vui lòng nhập mức ngân sách (VD: 20tr, dưới 30 triệu, 15-25tr)!", icon="💰")
         else:
             with st.spinner("🤖 AI đang phân tích phần cứng & giá..."):
-                # purpose: nếu chọn "auto" thì để None → core sẽ tự detect
                 core_purpose = None if purpose == "auto" else purpose
                 core_ans, products = get_answer(query, core_purpose, expand, brands)
 
                 if products:
-                    # Core đã tự rerank và tính fit_score rồi → chỉ cần log và gọi Groq
                     log_user_data(query, purpose if purpose != "auto" else "auto", len(products), products)
-
                     groq_advice = call_groq_analysis(query, purpose if purpose != "auto" else "office", products)
                     final_ans = groq_advice if groq_advice else core_ans
                 else:
@@ -310,7 +317,6 @@ if products:
         def esc(x): return html.escape(str(x)) if x else "N/A"
         price = p.get("price_value", 0)
         price_str = f"{price:,.0f} VNĐ" if price > 0 else "Liên hệ"
-        # Dùng fit_score từ core mới
         score = p.get('fit_score', 80)
         score_display = round(score, 1)
         ssd_display = format_storage(p.get("ssd_gb", 0))
